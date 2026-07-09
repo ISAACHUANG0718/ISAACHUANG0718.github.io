@@ -368,11 +368,30 @@ def _get_futu_financials(ctx, futu_code: str, is_hk: bool) -> list:
     return lines
 
 
+_futu_opend_up = None  # cached across calls: None=untested, True/False=probed
+
+def _futu_opend_available() -> bool:
+    """Quick one-time probe: is OpenD actually listening on 127.0.0.1:11111?
+    Avoids each stock separately waiting out Futu's per-query timeouts when OpenD isn't running."""
+    global _futu_opend_up
+    if _futu_opend_up is None:
+        import socket as _socket
+        try:
+            with _socket.create_connection(('127.0.0.1', 11111), timeout=1):
+                _futu_opend_up = True
+        except OSError:
+            _futu_opend_up = False
+    return _futu_opend_up
+
+
 def get_futu_context(futu_code: str, display_code: str) -> str:
     """Fetch analyst consensus + rating changes + financial statements from Futu."""
+    if not _futu_opend_available():
+        return "(Futu 连接失败: OpenD 未运行)"
     try:
         from futu import OpenQuoteContext, RET_OK
-        ctx = OpenQuoteContext(host='127.0.0.1', port=11111)
+        ctx = OpenQuoteContext(host='127.0.0.1', port=11111, is_async_connect=True)
+        time.sleep(1)  # give the async connect a moment before first query
     except Exception as e:
         return f"(Futu 连接失败: {e})"
 
@@ -769,9 +788,12 @@ def _heatmap_one_market(ctx, mkt: str, mapping: dict) -> list:
 def get_sector_heatmap(today):
     """美股 + 港股各 GICS 板块过去一周表现（富途行业板块）。失败返回 None。"""
     print("[+] 生成市场热点图（富途行业板块 → 板块周涨跌幅，成交额加权）...")
+    if not _futu_opend_available():
+        print("  ⚠  Futu 连接失败（OpenD 未运行），跳过市场热点图"); return None
     try:
         from futu import OpenQuoteContext
-        ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
+        ctx = OpenQuoteContext(host="127.0.0.1", port=11111, is_async_connect=True)
+        time.sleep(1)  # give the async connect a moment before first query
     except Exception as e:
         print(f"  ⚠  Futu 连接失败，跳过市场热点图: {e}"); return None
     win = None
